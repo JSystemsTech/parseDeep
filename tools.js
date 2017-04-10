@@ -21,21 +21,26 @@ var _handleInvalidInputError = function(errorObject) {
     console.error('Invalid input for param "' + errorObject.invalidParamName + '". ' +
         typeof errorObject.invalidParam + ' is not a ' + errorObject.invalidParamExpectedType);
 };
+var _setOptionsRegex = function(fieldsArray, options, optionsName) {
+    options = _.omit(options || {}, [optionsName]);
+    if (_.isUndefined(options.get(optionsName)) && _.isArray(fieldsArray) && !_.isEmpty(fieldsArray)) {
+        var fieldsRegex = [];
+        var replaceRegexStar = new RegExp('\\*', 'g');
+        var replaceRegexOpenBr = new RegExp('\\[', 'g');
+        var replaceRegexCloseBr = new RegExp('\\]', 'g');
+        var replaceRegexDots = new RegExp('\\.', 'g');
+        _.each(fieldsArray, function(field) {
+            fieldsRegex.push(field.replace(replaceRegexDots, '\\.').replace(replaceRegexOpenBr, '\\[').replace(replaceRegexCloseBr, '\\]').replace(replaceRegexStar, '(.*?)'));
+        });
+        options.set(optionsName, new RegExp('(' + fieldsRegex.join('|') + ')', "g"));
+        return _eachDeep(objectToMap, parentName, includeArraysAndCollections, callback, options);
+    }
+    return options;
+};
 var _beforeEachDeep = function(objectToMap, parentName, includeArraysAndCollections, callback, options) {
     if (_validate(objectToMap, callback)) {
-        options = _.omit(options || {}, ['_matchRegex']);
-        if (_.isUndefined(options._matchRegex) && _.isArray(options.ignoredFields) && !_.isEmpty(options.ignoredFields)) {
-            var ignoredFieldsRegex = [];
-            var replaceRegexStar = new RegExp('\\*', 'g');
-            var replaceRegexOpenBr = new RegExp('\\[', 'g');
-            var replaceRegexCloseBr = new RegExp('\\]', 'g');
-            var replaceRegexDots = new RegExp('\\.', 'g');
-            _.each(options.ignoredFields, function(field) {
-                ignoredFieldsRegex.push(field.replace(replaceRegexDots, '\\.').replace(replaceRegexOpenBr, '\\[').replace(replaceRegexCloseBr, '\\]').replace(replaceRegexStar, '(.*?)'));
-            });
-            options._matchRegex = new RegExp('(' + ignoredFieldsRegex.join('|') + ')', "g");
-            return _eachDeep(objectToMap, parentName, includeArraysAndCollections, callback, options);
-        }
+        _setOptionsRegex(options.ignoredFields, options, '_ingnoredRegex');
+        _setOptionsRegex(options.specificFields, options, '_specificRegex');
         return _eachDeep(objectToMap, parentName, includeArraysAndCollections, callback, options);
     }
 };
@@ -58,15 +63,25 @@ var _eachDeep = function(objectToMap, parentName, includeArraysAndCollections, c
         }
     });
 };
-var _checkOptionsBeforeCallback = function(value, currentName, callback, options) {
-    options = options || {};
-    if (!_.isUndefined(options._matchRegex)) {
-        var isMatch = currentName.match(options._matchRegex) !== null;
-        if (!isMatch) {
+var _checkIgnoredFields = function(value, currentName, callback, options) {
+    if (!_.isUndefined(options._ingnoredRegex)) {
+        var isInIgnoredFields = currentName.match(options._ingnoredRegex) !== null;
+        if (!isInIgnoredFields) {
             return callback(value, currentName);
         }
     } else {
         return callback(value, currentName);
+    }
+};
+var _checkOptionsBeforeCallback = function(value, currentName, callback, options) {
+    options = options || {};
+    if (!_.isUndefined(options._specificRegex)) {
+        var isInSpecifiedFields = currentName.match(options._specificRegex) !== null;
+        if (isInSpecifiedFields) {
+            _checkIgnoredFields(value, currentName, callback, options);
+        }
+    } else {
+        _checkIgnoredFields(value, currentName, callback, options);
     }
 };
 var eachDeep = function(targetObj, iterator, options) {
@@ -75,19 +90,30 @@ var eachDeep = function(targetObj, iterator, options) {
 var eachDeepEnds = function(targetObj, iterator, options) {
     _beforeEachDeep(targetObj, '', false, iterator, options);
 };
-var keysDeep = function(getKeysObj) {
+var keysDeep = function(getKeysObj, options) {
     var keysArray = [];
     eachDeep(getKeysObj, function(value, key) {
         keysArray.push(key);
-    });
+    }, options);
     return keysArray;
 };
-var keysDeepEnds = function(getKeysObj) {
+var keysDeepEnds = function(getKeysObj, options) {
     var keysArray = [];
     eachDeepEnds(getKeysObj, function(value, key) {
         keysArray.push(key);
-    });
+    }, options);
     return keysArray;
+};
+
+var setEachDeep = function(targetObj, iterator, options) {
+    eachDeep(targetObj, function(value, key) {
+        _.set(targetObj, key, iterator(value, key));
+    }, options);
+};
+var setEachDeepEnds = function(targetObj, iterator, options) {
+    eachDeep(targetObj, function(value, key) {
+        _.set(targetObj, key, iterator(value, key));
+    }, options);
 };
 
 var compress = function(getKeysObj) {
@@ -123,7 +149,7 @@ var where = function(getKeysObj, filterFunction) {
                 filteredObj[key] = value;
             }
         });
-        
+
     }
     return filteredObj;
 };
